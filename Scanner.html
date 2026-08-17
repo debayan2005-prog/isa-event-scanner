@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ISA Event Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+body{font-family:Arial;margin:0;background:#f3f4f6;color:#111827}.wrap{max-width:680px;margin:auto;padding:15px}.card{background:white;padding:20px;border-radius:18px;margin-bottom:15px;box-shadow:0 5px 20px #0001}h1{text-align:center}input{width:100%;padding:13px;border:1px solid #ccc;border-radius:10px;font-size:16px;box-sizing:border-box}button{padding:13px 18px;border:0;border-radius:10px;margin:5px;font-size:16px}.primary{background:#111827;color:white}.secondary{background:#e5e7eb}#reader{max-width:500px;margin:20px auto}.center{text-align:center}.result{display:none;padding:18px;border-radius:14px;margin-top:15px}.valid{display:block;background:#dcfce7}.warning{display:block;background:#fef3c7}.invalid{display:block;background:#fee2e2}.info{display:block;background:#dbeafe}.details{text-align:left;line-height:1.8}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{text-align:center;background:#f9fafb;padding:12px;border-radius:10px}.num{font-size:25px;font-weight:bold}.small{color:#6b7280}@media(max-width:500px){.stats{grid-template-columns:1fr}button{width:calc(100% - 10px)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>🎟️ ISA EVENT SCANNER</h1>
+<p class="center small">ISA STUDENT CHAPTER BCREC</p>
+<label>Gate / Scanner</label><input id="gate" value="Gate 1">
+<div id="reader"></div>
+<div class="center"><button class="primary" onclick="start()">📷 Start Scanner</button><button class="secondary" onclick="stop()">⏹ Stop</button></div>
+<p id="status" class="center small">Scanner stopped.</p>
+<div id="result" class="result"></div>
+</div>
+
+<div class="card">
+<h2>📊 Live Attendance</h2>
+<div class="stats"><div class="stat"><div id="selected" class="num">-</div>Selected</div><div class="stat"><div id="present" class="num">-</div>Present</div><div class="stat"><div id="remaining" class="num">-</div>Remaining</div></div>
+<p id="pct" class="center">Attendance: -</p>
+</div>
+</div>
+
+<script>
+const BACKEND_URL='https://script.google.com/macros/s/AKfycbz1DJMop-KQXR2uuhiojFLlkoy-xcgUsWa0_PT4L0fMg_X9eX_psbaN4p-Z_oTUltmY/exec';
+const SCANNER_SECRET='ISA-BCREC-2026-X7K9P2LM4Q';
+let qr=null,running=false,busy=false;
+
+function start(){
+ if(running||busy)return;
+ if(BACKEND_URL.includes('PASTE_YOUR')){show('invalid','⚠️ BACKEND NOT CONFIGURED','Paste your Apps Script /exec URL into BACKEND_URL.');return;}
+ if(location.protocol!=='https:'&&location.hostname!=='localhost'){show('invalid','❌ HTTPS REQUIRED','Host this scanner on an HTTPS website.');return;}
+ qr=new Html5Qrcode('reader');
+ qr.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},text=>{
+   if(busy)return;busy=true;stop();send(text);
+ },()=>{}).then(()=>{running=true;document.getElementById('status').textContent='📷 Camera active — scan the QR.';show('info','📷 SCANNER READY','Point the rear camera at the official QR ticket.');}).catch(e=>show('invalid','❌ CAMERA ERROR','Allow camera permission and make sure this page uses HTTPS.<br><br>'+esc(e)));
+}
+
+function stop(){
+ if(!qr||!running)return;
+ qr.stop().then(()=>{running=false;try{qr.clear()}catch(e){}document.getElementById('status').textContent='Scanner stopped.'}).catch(()=>running=false);
+}
+
+function send(qrData){
+ const gate=document.getElementById('gate').value.trim()||'Gate 1';
+ const cb='cb'+Date.now()+Math.floor(Math.random()*10000);
+ window[cb]=data=>{try{display(data)}finally{delete window[cb];busy=false}};
+ const u=BACKEND_URL+'?action=scan&qr='+encodeURIComponent(qrData)+'&gate='+encodeURIComponent(gate)+'&secret='+encodeURIComponent(SCANNER_SECRET)+'&callback='+cb;
+ const s=document.createElement('script');s.src=u;s.onerror=()=>{show('invalid','❌ CONNECTION ERROR','Cannot reach the Apps Script backend. Check the /exec URL.');delete window[cb];busy=false};document.body.appendChild(s);setTimeout(()=>s.remove(),15000);
+}
+
+function display(d){
+ if(d.type==='VALID'){show('valid','✅ ENTRY APPROVED','<b>Name:</b> '+esc(d.name)+'<br><b>Student ID:</b> '+esc(d.studentId)+'<br><b>Ticket:</b> '+esc(d.ticketId)+'<br><b>Entry:</b> '+esc(d.entryTime)+'<br><b>Gate:</b> '+esc(d.scannedBy)+'<br><br><b>ENTRY ALLOWED</b>');stats();setTimeout(start,2000);return}
+ if(d.type==='ALREADY_USED'){show('warning','⚠️ ALREADY CHECKED IN','<b>Name:</b> '+esc(d.name)+'<br><b>Student ID:</b> '+esc(d.studentId)+'<br><b>First Entry:</b> '+esc(d.entryTime)+'<br><b>Gate:</b> '+esc(d.scannedBy)+'<br><br><b>❌ ENTRY DENIED</b>');return}
+ if(d.type==='NOT_SELECTED'){show('invalid','❌ NOT SELECTED','<b>Name:</b> '+esc(d.name)+'<br><b>Student ID:</b> '+esc(d.studentId)+'<br><br><b>❌ ENTRY DENIED</b>');return}
+ if(d.type==='UNAUTHORIZED'){show('invalid','🔒 UNAUTHORIZED SCANNER','Scanner Secret does not match Code.gs.');return}
+ show('invalid','❌ INVALID TICKET',esc(d.message||'Invalid QR ticket.'));
+}
+
+function show(c,t,x){const r=document.getElementById('result');r.className='result '+c;r.innerHTML='<h2>'+t+'</h2><div class="details">'+x+'</div>';r.style.display='block'}
+function stats(){
+ if(BACKEND_URL.includes('PASTE_YOUR'))return;
+ const cb='st'+Date.now()+Math.floor(Math.random()*10000);
+ window[cb]=d=>{try{if(!d.ok)return;document.getElementById('selected').textContent=d.selected;document.getElementById('present').textContent=d.present;document.getElementById('remaining').textContent=d.remaining;document.getElementById('pct').textContent='Attendance: '+d.percentage+'%'}finally{delete window[cb]}};
+ const s=document.createElement('script');s.src=BACKEND_URL+'?action=stats&secret='+encodeURIComponent(SCANNER_SECRET)+'&callback='+cb;document.body.appendChild(s);setTimeout(()=>s.remove(),10000);
+}
+function esc(x){return String(x??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;')}
+stats();
+</script>
+</body>
+</html>
